@@ -35,8 +35,11 @@ def modulo(a, b):
     if b == 0:
         raise ValueError("Деление на ноль невозможно")
     return a % b
+development
 
 
 def square(a):
     """Возводит число в квадрат"""
     return a ** 2
+
+ main

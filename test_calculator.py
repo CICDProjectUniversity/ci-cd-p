@@ -2,7 +2,11 @@
 Тесты для калькулятора
 """
 import unittest
+development
 from calculator import add, subtract, multiply, divide, power, modulo, square
+
+from calculator import add, subtract, multiply, divide, power, modulo
+main
 
 
 class TestCalculator(unittest.TestCase):
@@ -36,6 +40,8 @@ class TestCalculator(unittest.TestCase):
         """Тест деления на ноль"""
         with self.assertRaises(ValueError):
             divide(5, 0)
+ development
+
 
     def test_power(self):
         """Тест возведения в степень"""
@@ -47,6 +53,19 @@ class TestCalculator(unittest.TestCase):
         """Тест остатка от деления"""
         self.assertEqual(modulo(10, 3), 1)
         self.assertEqual(modulo(20, 5), 0)
+main
+
+    def test_power(self):
+        """Тест возведения в степень"""
+        self.assertEqual(power(2, 3), 8)
+        self.assertEqual(power(5, 0), 1)
+        self.assertEqual(power(10, 2), 100)
+
+ development
+    def test_modulo(self):
+        """Тест остатка от деления"""
+        self.assertEqual(modulo(10, 3), 1)
+        self.assertEqual(modulo(20, 5), 0)
 
     def test_square(self):
         """Тест возведения в квадрат"""
@@ -54,7 +73,7 @@ class TestCalculator(unittest.TestCase):
         self.assertEqual(square(5), 25)
         self.assertEqual(square(0), 0)
 
-
+ main
 if __name__ == '__main__':
     unittest.main()
 
