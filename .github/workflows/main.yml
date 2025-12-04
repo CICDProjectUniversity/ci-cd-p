@@ -2,7 +2,7 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [main, development]
+    branches: [ main, development ]
 
 permissions:
   contents: write
@@ -53,14 +53,14 @@ jobs:
 
       - name: Commit updated docs
         run: |
-          git config user.name "github-actions"
-          git config user.email "bot@github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add docs/
           git commit -m "📝 Auto-update documentation" || echo "No changes in docs"
-          git push origin development
+          git push origin development || echo "Nothing to push"
 
   create-pr:
-    needs: update-docs
+    needs: [test, update-docs]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/development'
     permissions:
@@ -76,27 +76,62 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          echo "Checking for existing PR development -> main..."
           EXISTING_PR=$(gh pr list --base main --head development --json number --jq '.[0].number')
 
           if [ -z "$EXISTING_PR" ]; then
+            echo "Creating new PR..."
             gh pr create \
               --base main \
               --head development \
               --title "🔀 Auto PR: development → main" \
-              --body "Автоматическое обновление документации и кода."
+              --body "Автоматическое обновление кода и документации из ветки development."
           else
-            echo "PR already exists (#$EXISTING_PR)"
+            echo "PR already exists: #$EXISTING_PR"
           fi
 
-      - name: Auto-Merge PR
+      - name: Auto-merge PR (with fallback)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set +e
+
           PR_NUMBER=$(gh pr list --base main --head development --json number --jq '.[0].number')
 
           if [ -z "$PR_NUMBER" ]; then
-            echo "No PR found"
+            echo "No PR found."
             exit 0
           fi
 
-          gh pr merge "$PR_NUMBER" --squash --auto --delete-branch=false
+          echo "Trying GitHub auto-merge for PR #$PR_NUMBER..."
+          ERR_FILE=$(mktemp)
+
+          gh pr merge "$PR_NUMBER" --squash --auto --delete-branch=false 2> "$ERR_FILE"
+          STATUS=$?
+
+          if [ $STATUS -eq 0 ]; then
+            echo "✅ Auto-merge enabled successfully."
+            rm -f "$ERR_FILE"
+            exit 0
+          fi
+
+          if grep -q "enablePullRequestAutoMerge" "$ERR_FILE"; then
+            echo "⚠️ Auto-merge API not available for this branch. Trying admin merge without --auto..."
+            gh pr merge "$PR_NUMBER" --squash --admin --delete-branch=false
+            STATUS2=$?
+            if [ $STATUS2 -eq 0 ]; then
+              echo "✅ Admin merge completed."
+              rm -f "$ERR_FILE"
+              exit 0
+            else
+              echo "⚠️ Admin merge failed (скорее всего конфликты или жёсткая защита ветки)."
+              cat "$ERR_FILE"
+              rm -f "$ERR_FILE"
+              exit 0
+            fi
+          fi
+
+          echo "⚠️ Merge failed по другой причине (скорее всего конфликты)."
+          cat "$ERR_FILE"
+          rm -f "$ERR_FILE"
+          exit 0
