@@ -84,10 +84,12 @@ jobs:
             echo "PR already exists: #$EXISTING_PR"
           fi
 
-      - name: Enable Auto-Merge
+      - name: Admin merge PR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -e
+
           PR_NUMBER=$(gh pr list --base main --head development --json number --jq '.[0].number')
 
           if [ -z "$PR_NUMBER" ]; then
@@ -95,8 +97,11 @@ jobs:
             exit 0
           fi
 
-          echo "Auto-merging PR #$PR_NUMBER..."
-          gh pr merge "$PR_NUMBER" --squash --auto --delete-branch=false
+          PR_URL=$(gh pr view "$PR_NUMBER" --json url --jq '.url')
+
+          echo "Admin-merging PR #$PR_NUMBER ($PR_URL)..."
+          # форсируем merge как админ, обычным merge или squash — на твой вкус
+          gh pr merge "$PR_URL" --admin --squash --delete-branch=false
 
   documentation:
     needs: test
