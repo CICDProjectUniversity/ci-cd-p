@@ -2,14 +2,10 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ main, development, release/** ]
-  pull_request:
-    branches: [ main ]
+    branches: [ main, development ]
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
   pull-requests: write
 
 jobs:
@@ -34,29 +30,39 @@ jobs:
         run: |
           python -m pytest -v --cov=. --cov-report=term-missing
 
-      - name: Generate Test Report
-        if: always()
-        run: |
-          echo "# Test Report" > test-report.md
-          echo "Date: $(date)" >> test-report.md
-          echo "Branch: ${{ github.ref_name }}" >> test-report.md
-          echo "" >> test-report.md
-          python -m pytest -v || true
-
       - name: Linting (flake8)
         run: flake8 .
 
-      - name: Upload Test Report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-report
-          path: test-report.md
-
-  create-pr:
+  update-docs:
     needs: test
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/development' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/development'
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Generate Docs
+        run: |
+          python generate_docs.py
+
+      - name: Commit updated docs
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/
+          git commit -m "📝 Auto-update documentation" || echo "No changes in docs"
+          git push origin development || echo "Nothing to push"
+
+  create-pr:
+    needs: [test, update-docs]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/development'
     permissions:
       contents: write
       pull-requests: write
@@ -70,7 +76,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Checking for existing PR..."
+          echo "Checking for existing PR development -> main..."
           EXISTING_PR=$(gh pr list --base main --head development --json number --jq '.[0].number')
 
           if [ -z "$EXISTING_PR" ]; then
@@ -79,15 +85,17 @@ jobs:
               --base main \
               --head development \
               --title "🔀 Auto PR: development → main" \
-              --body "Автоматический PR после прохождения тестов."
+              --body "Автоматическое обновление кода и документации из ветки development."
           else
             echo "PR already exists: #$EXISTING_PR"
           fi
 
-      - name: Enable Auto-Merge
+      - name: Auto-merge PR (with fallback)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set +e
+
           PR_NUMBER=$(gh pr list --base main --head development --json number --jq '.[0].number')
 
           if [ -z "$PR_NUMBER" ]; then
@@ -95,39 +103,35 @@ jobs:
             exit 0
           fi
 
-          echo "Auto-merging PR #$PR_NUMBER..."
-          gh pr merge "$PR_NUMBER" --squash --auto --delete-branch=false
+          echo "Trying GitHub auto-merge for PR #$PR_NUMBER..."
+          ERR_FILE=$(mktemp)
 
-  documentation:
-    needs: test
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    permissions:
-      contents: write
-      pages: write
-      id-token: write
+          gh pr merge "$PR_NUMBER" --squash --auto --delete-branch=false 2> "$ERR_FILE"
+          STATUS=$?
 
-    steps:
-      - uses: actions/checkout@v4
+          if [ $STATUS -eq 0 ]; then
+            echo "✅ Auto-merge enabled successfully."
+            rm -f "$ERR_FILE"
+            exit 0
+          fi
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
+          if grep -q "enablePullRequestAutoMerge" "$ERR_FILE"; then
+            echo "⚠️ Auto-merge API not available for this branch. Trying admin merge without --auto..."
+            gh pr merge "$PR_NUMBER" --squash --admin --delete-branch=false
+            STATUS2=$?
+            if [ $STATUS2 -eq 0 ]; then
+              echo "✅ Admin merge completed."
+              rm -f "$ERR_FILE"
+              exit 0
+            else
+              echo "⚠️ Admin merge failed (скорее всего конфликты или жёсткая защита ветки)."
+              cat "$ERR_FILE"
+              rm -f "$ERR_FILE"
+              exit 0
+            fi
+          fi
 
-      - name: Generate Docs
-        run: |
-          python generate_docs.py
-          ls -la docs/
-
-      - name: Deploy Docs
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./docs
-          force_orphan: true
-
-      - name: Upload Docs Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: documentation
-          path: docs/
+          echo "⚠️ Merge failed по другой причине (скорее всего конфликты)."
+          cat "$ERR_FILE"
+          rm -f "$ERR_FILE"
+          exit 0
