@@ -67,48 +67,60 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-
+  
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
+  
       - name: Create Pull Request
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Проверяем, есть ли уже открытый PR development -> main
+          set +e
+  
+          echo "Проверяем, есть ли уже открытый PR development -> main"
           EXISTING_PR=$(gh pr list --base main --head development --json number --jq '.[0].number')
-
+  
           if [ -z "$EXISTING_PR" ]; then
             echo "Creating new PR..."
             gh pr create \
-              --title "🔀 Auto-merge: development → main" \
-              --body "Автоматический PR из development в main после успешного прохождения тестов.
-
-              Коммит: ${{ github.sha }}
-              Автор: ${{ github.actor }}
-
-              Тесты пройдены ✅" \
+              --title "🔀 Auto PR: development → main" \
+              --body "Автоматический PR из development в main после успешного прохождения тестов." \
               --base main \
               --head development
+            STATUS=$?
+            if [ $STATUS -ne 0 ]; then
+              echo "⚠️ Не удалось создать PR (скорее всего нет прав или ограничения репозитория). Пропускаем."
+              exit 0
+            fi
           else
             echo "PR already exists: #$EXISTING_PR"
           fi
-
-      - name: Auto-merge PR
+  
+      - name: Merge PR (no auto-merge feature)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set +e
+  
           PR_NUMBER=$(gh pr list --base main --head development --json number --jq '.[0].number')
-
-          if [ ! -z "$PR_NUMBER" ]; then
-            echo "Auto-merging PR #$PR_NUMBER..."
-            gh pr merge $PR_NUMBER --squash --auto --delete-branch=false
-          else
+  
+          if [ -z "$PR_NUMBER" ]; then
             echo "No PR found to merge."
+            exit 0
           fi
+  
+          echo "Trying to merge PR #$PR_NUMBER..."
+          # Обычный squash merge БЕЗ --auto
+          gh pr merge "$PR_NUMBER" --squash --delete-branch=false
+          STATUS=$?
+  
+          if [ $STATUS -ne 0 ]; then
+            echo "⚠️ Не удалось выполнить merge (нет прав или запрещено защитой ветки). Не падаем."
+            exit 0
+          fi
+
 
   documentation:
     needs: test
