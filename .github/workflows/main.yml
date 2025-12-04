@@ -14,46 +14,39 @@ permissions:
 
 jobs:
   test:
-    name: Запуск тестов
+    name: Run Tests
     runs-on: ubuntu-latest
 
     steps:
-      - name: Клонирование репозитория
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Установка Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: Установка зависимостей
+      - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          # при необходимости: dev-зависимости
-          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          pip install -r requirements.txt
+          pip install pytest pytest-cov flake8
 
-      - name: Запуск тестов с покрытием
+      - name: Run Tests with Coverage
         run: |
-          python -m pytest -v --cov=calculator --cov-report=term-missing
+          python -m pytest -v --cov=. --cov-report=term-missing
 
-      - name: Генерация отчета о тестах
+      - name: Generate Test Report
         if: always()
         run: |
           echo "# Test Report" > test-report.md
           echo "Date: $(date)" >> test-report.md
           echo "Branch: ${{ github.ref_name }}" >> test-report.md
           echo "" >> test-report.md
-          # Отдельный прогон только для красивого вывода в отчёт
           python -m pytest -v || true
 
-      - name: Проверка стиля кода (flake8)
-        run: |
-          pip install flake8
-          # поменяй пути/опции под свой проект
-          flake8 calculator.py --max-line-length=100 --ignore=E501
+      - name: Linting (flake8)
+        run: flake8 .
 
-      - name: Upload test report
+      - name: Upload Test Report
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -69,8 +62,7 @@ jobs:
       pull-requests: write
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -78,37 +70,33 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Проверяем, есть ли уже открытый PR development -> main
+          echo "Checking for existing PR..."
           EXISTING_PR=$(gh pr list --base main --head development --json number --jq '.[0].number')
 
           if [ -z "$EXISTING_PR" ]; then
             echo "Creating new PR..."
             gh pr create \
-              --title "🔀 Auto-merge: development → main" \
-              --body "Автоматический PR из development в main после успешного прохождения тестов.
-
-              Коммит: ${{ github.sha }}
-              Автор: ${{ github.actor }}
-
-              Тесты пройдены ✅" \
               --base main \
-              --head development
+              --head development \
+              --title "🔀 Auto PR: development → main" \
+              --body "Автоматический PR после прохождения тестов."
           else
             echo "PR already exists: #$EXISTING_PR"
           fi
 
-      - name: Auto-merge PR
+      - name: Enable Auto-Merge
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           PR_NUMBER=$(gh pr list --base main --head development --json number --jq '.[0].number')
 
-          if [ ! -z "$PR_NUMBER" ]; then
-            echo "Auto-merging PR #$PR_NUMBER..."
-            gh pr merge $PR_NUMBER --squash --auto --delete-branch=false
-          else
-            echo "No PR found to merge."
+          if [ -z "$PR_NUMBER" ]; then
+            echo "No PR found."
+            exit 0
           fi
+
+          echo "Auto-merging PR #$PR_NUMBER..."
+          gh pr merge "$PR_NUMBER" --squash --auto --delete-branch=false
 
   documentation:
     needs: test
@@ -120,72 +108,25 @@ jobs:
       id-token: write
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Установка Python (если вдруг нужно что-то генерировать скриптами)
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: Generate documentation
+      - name: Generate Docs
         run: |
-          mkdir -p docs
-
-          # Копируем основную документацию
-          cp README.md docs/index.md
-          cp CHANGELOG.md docs/ 2>/dev/null || echo "# Changelog" > docs/CHANGELOG.md
-          cp VERSION docs/ 2>/dev/null || echo "1.0.0" > docs/VERSION
-
-          # Основная страница документации
-          cat > docs/documentation.md << 'DOCS'
-          # Документация проекта
-
-          ## Обзор
-          Python Calculator — калькулятор для базовых математических операций.
-
-          ## Установка
-          См. [README](index.md)
-
-          ## API Reference
-
-          ### Основные функции
-          (здесь опиши функции / классы своего калькулятора)
-
-          ## Тестирование
-          Проект покрыт тестами с использованием pytest.
-
-          ## CI/CD
-          Автоматическое тестирование и деплой документации через GitHub Actions.
-          DOCS
-
-          # Индексная страница
-          cat > docs/README.md << 'INDEX'
-          # Python Calculator — Документация
-
-          Добро пожаловать в документацию проекта!
-
-          ## Разделы
-
-          - [Главная страница](index.md)
-          - [Полная документация](documentation.md)
-          - [История изменений](CHANGELOG.md)
-
-          ## Версия
-          INDEX
-          cat docs/VERSION >> docs/README.md
-
-          echo "✅ Документация сгенерирована: $(date)" > docs/BUILD_INFO.txt
+          python generate_docs.py
           ls -la docs/
 
-      - name: Deploy documentation
+      - name: Deploy Docs
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./docs
           force_orphan: true
 
-      - name: Upload documentation artifact
+      - name: Upload Docs Artifact
         uses: actions/upload-artifact@v4
         with:
           name: documentation
